@@ -1,0 +1,304 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000"
+    android:keepScreenOn="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:padding="1dp"
+        android:orientation="vertical">
+
+        <LinearLayout android:id="@+id/row0" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
+            <FrameLayout android:id="@+id/tile0" style="@style/Tile">
+                <androidx.media3.ui.PlayerView style="@style/Video" app:use_controller="false" app:resize_mode="fit" app:shutter_background_color="#111" />
+                <TextView style="@style/Label" />
+            </FrameLayout>
+            <FrameLayout android:id="@+id/tile1" style="@style/Tile">
+                <androidx.media3.ui.PlayerView style="@style/Video" app:use_controller="false" app:resize_mode="fit" app:shutter_background_color="#111" />
+                <TextView style="@style/Label" />
+            </FrameLayout>
+        </LinearLayout>
+
+        <LinearLayout android:id="@+id/row1" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
+            <FrameLayout android:id="@+id/tile2" style="@style/Tile">
+                <androidx.media3.ui.PlayerView style="@style/Video" app:use_controller="false" app:resize_mode="fit" app:shutter_background_color="#111" />
+                <TextView style="@style/Label" />
+            </FrameLayout>
+            <FrameLayout android:id="@+id/tile3" style="@style/Tile">
+                <androidx.media3.ui.PlayerView style="@style/Video" app:use_controller="false" app:resize_mode="fit" app:shutter_background_color="#111" />
+                <TextView style="@style/Label" />
+            </FrameLayout>
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- Which dashboard (page of 4 cameras) is showing; only when there is more than one -->
+    <TextView
+        android:id="@+id/pagePill"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_margin="15dp"
+        android:background="@drawable/pill"
+        android:fontFamily="sans-serif-medium"
+        android:paddingHorizontal="24dp"
+        android:paddingVertical="8dp"
+        android:textColor="#FFF"
+        android:textSize="26sp"
+        android:visibility="gone" />
+
+    <!-- Recordings panel: slides in from the right in full screen (OK) -->
+    <LinearLayout
+        android:id="@+id/flyout"
+        android:layout_width="500dp"
+        android:layout_height="match_parent"
+        android:layout_gravity="end"
+        android:orientation="vertical"
+        android:padding="24dp"
+        android:background="#202124"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/flyoutTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingBottom="12dp"
+            android:fontFamily="sans-serif-medium"
+            android:textColor="#FFF"
+            android:textSize="28sp" />
+
+        <!-- Date picker: Left/Right = previous/next day -->
+        <TextView
+            android:id="@+id/flyoutDate"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:background="@drawable/card_focus"
+            android:focusable="true"
+            android:gravity="center"
+            android:padding="14dp"
+            android:textColor="#FFF"
+            android:textSize="24sp" />
+
+        <!-- Sort: Left/Right or OK = newest first / oldest first (RecordingsPanel, prefs sort_oldest) -->
+        <TextView
+            android:id="@+id/flyoutSort"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:background="@drawable/card_focus"
+            android:focusable="true"
+            android:gravity="center"
+            android:padding="14dp"
+            android:textColor="#FFF"
+            android:textSize="24sp" />
+
+        <ProgressBar
+            android:id="@+id/flyoutSpin"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_gravity="center_horizontal" />
+
+        <ListView
+            android:id="@+id/clipList"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:divider="@android:color/transparent"
+            android:dividerHeight="12dp"
+            android:drawSelectorOnTop="true"
+            android:listSelector="@drawable/card_focus" />
+    </LinearLayout>
+
+    <!-- Saved positions panel (dock "Positions"): same look as the recordings panel; the camera stays in view -->
+    <LinearLayout
+        android:id="@+id/posPanel"
+        android:layout_width="500dp"
+        android:layout_height="match_parent"
+        android:layout_gravity="end"
+        android:orientation="vertical"
+        android:padding="24dp"
+        android:background="#202124"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/posTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="sans-serif-medium"
+            android:textColor="#FFF"
+            android:textSize="28sp" />
+
+        <TextView
+            android:id="@+id/posHints"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:layout_marginBottom="16dp"
+            android:textColor="#CFD8DC"
+            android:textSize="20sp" />
+
+        <EditText
+            android:id="@+id/posName"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:background="@drawable/card"
+            android:imeOptions="actionDone"
+            android:inputType="textCapWords"
+            android:maxLength="30"
+            android:padding="18dp"
+            android:textColor="#FFF"
+            android:textColorHint="#9AA0A6"
+            android:textSize="26sp"
+            android:visibility="gone" />
+
+        <ListView
+            android:id="@+id/posList"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:divider="@android:color/transparent"
+            android:dividerHeight="12dp"
+            android:drawSelectorOnTop="true"
+            android:listSelector="@drawable/card_focus" />
+    </LinearLayout>
+
+    <!-- Dock: hold OK in full-screen live. Same floating panel as the recording bar below. Left/Right choose, OK does it, Back closes. -->
+    <LinearLayout
+        android:id="@+id/dock"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="24dp"
+        android:background="@drawable/toast_card"
+        android:gravity="center_horizontal"
+        android:orientation="vertical"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="14dp"
+        android:visibility="gone">
+
+        <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content">
+            <TextView android:id="@+id/dockShot" style="@style/DockButton" android:drawableStart="@drawable/ic_dock_shot" android:text="Screenshot" />
+            <TextView android:id="@+id/dockRec" style="@style/DockButton" android:drawableStart="@drawable/ic_dock_rec" android:text="Record" />
+            <!-- the camera's own microphone; shows its state, OK flips it -->
+            <TextView android:id="@+id/dockMic" style="@style/DockButton" android:drawableStart="@drawable/ic_dock_mic" android:text="Mic" />
+            <!-- neighbour cameras: an event on one shows them all side by side in the grid -->
+            <TextView android:id="@+id/dockLink" style="@style/DockButton" android:drawableStart="@drawable/ic_dock_link" android:text="Neighbours" />
+            <!-- saved PTZ positions (stored on the camera): OK = turn there, hold OK = edit -->
+            <TextView android:id="@+id/dockPos" style="@style/DockButton" android:drawableStart="@drawable/ic_dock_pos" android:text="Positions" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/dockHints"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:textColor="#CFD8DC"
+            android:textSize="20sp" />
+    </LinearLayout>
+
+    <!-- Shown while a video is being recorded to the box -->
+    <TextView
+        android:id="@+id/recPill"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
+        android:layout_margin="40dp"
+        android:background="@drawable/pill"
+        android:fontFamily="sans-serif-medium"
+        android:paddingHorizontal="20dp"
+        android:paddingVertical="10dp"
+        android:textColor="#FF5252"
+        android:textSize="28sp"
+        android:visibility="gone" />
+
+    <LinearLayout
+        android:id="@+id/statusBox"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_margin="40dp"
+        android:background="@drawable/toast_card"
+        android:elevation="8dp"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="28dp"
+        android:paddingVertical="20dp"
+        android:visibility="gone">
+
+        <ProgressBar
+            android:id="@+id/statusSpin"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_marginEnd="20dp"
+            android:indeterminateTint="#1E88E5" />
+
+        <TextView
+            android:id="@+id/status"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="sans-serif-medium"
+            android:textColor="#FFF"
+            android:textSize="26sp" />
+    </LinearLayout>
+
+    <!-- Recording bar: what is playing + which keys do what (shown only while a recording plays) -->
+    <LinearLayout
+        android:id="@+id/clipBar"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="24dp"
+        android:background="@drawable/toast_card"
+        android:gravity="center_horizontal"
+        android:orientation="vertical"
+        android:paddingHorizontal="28dp"
+        android:paddingVertical="14dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/clipTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="sans-serif-medium"
+            android:textColor="#FFF"
+            android:textSize="26sp" />
+
+        <!-- how far the recording has played (display only: no scrubbing, boss dropped it) -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:gravity="center_vertical">
+
+            <ProgressBar
+                android:id="@+id/clipProgress"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="0dp"
+                android:layout_height="8dp"
+                android:layout_weight="1"
+                android:max="1000"
+                android:progressBackgroundTint="#3C4043"
+                android:progressTint="#1E88E5" />
+
+            <TextView
+                android:id="@+id/clipTime"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="16dp"
+                android:textColor="#CFD8DC"
+                android:textSize="20sp" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/clipHints"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:textColor="#CFD8DC"
+            android:textSize="20sp" />
+    </LinearLayout>
+</FrameLayout>

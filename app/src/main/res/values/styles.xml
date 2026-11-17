@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Tile">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">match_parent</item>
+        <item name="android:layout_weight">1</item>
+        <!-- half the gap; the grid's own 1dp padding makes the screen edges match: every gap = 2dp (boss 2026-11-17) -->
+        <item name="android:layout_margin">1dp</item>
+        <item name="android:focusable">true</item>
+        <item name="android:clickable">true</item>
+        <item name="android:foreground">@drawable/focus</item>
+        <item name="android:background">#111</item>
+    </style>
+    <style name="Video">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">match_parent</item>
+        <item name="android:focusable">false</item>
+        <!-- Amlogic boxes show only ONE SurfaceView video layer; TextureView lets every tile show. -->
+        <item name="surface_type">texture_view</item>
+        <!-- no spinner per tile: the one status card spinner covers start-up and recordings (boss: one spinner) -->
+        <item name="show_buffering">never</item>
+        <!-- keep showing the last frame while a feed reconnects / switches VGA<->HD -->
+        <item name="keep_content_on_player_reset">true</item>
+    </style>
+    <style name="DockButton">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginHorizontal">6dp</item>
+        <item name="android:paddingHorizontal">18dp</item>
+        <item name="android:paddingVertical">10dp</item>
+        <item name="android:drawablePadding">14dp</item>
+        <item name="android:gravity">center</item>
+        <item name="android:background">@drawable/dock_button</item>
+        <item name="android:focusable">true</item>
+        <item name="android:clickable">true</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textColor">#FFF</item>
+        <item name="android:textSize">26sp</item>
+    </style>
+    <style name="Label">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <!-- top-right, clear of the camera's own date stamp (top-left); smaller (boss 2026-11-17, was 22sp bottom-left) -->
+        <item name="android:layout_gravity">top|end</item>
+        <item name="android:layout_margin">10dp</item>
+        <item name="android:paddingHorizontal">12dp</item>
+        <item name="android:paddingVertical">4dp</item>
+        <item name="android:background">@drawable/pill</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textColor">#FFF</item>
+        <item name="android:textSize">18sp</item>
+        <!-- hidden until play() gives the tile a camera name (no empty pills while scanning) -->
+        <item name="android:visibility">gone</item>
+    </style>
+</resources>

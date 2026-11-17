@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Thin blue border on the tile the remote is pointing at. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_focused="true">
+        <shape><stroke android:width="3dp" android:color="#1E88E5" /></shape>
+    </item>
+    <item><color android:color="@android:color/transparent" /></item>
+</selector>

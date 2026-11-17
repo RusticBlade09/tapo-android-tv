@@ -1,0 +1,12 @@
+.gradle/
+build/
+local.properties
+tools/.venv/
+tools/out/
+.kotlin/
+tools/__pycache__/
+# Private (owner's decision 2026-11-17): working notes, screenshots of the property, camera footage, memory mirror
+HANDOFF/
+MEMORY BACKUP/
+.claude/
+*.apk

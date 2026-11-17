@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One recording in the recordings panel: thumbnail + time + length/event. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/card"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:padding="10dp">
+
+    <ImageView
+        android:id="@+id/thumb"
+        android:layout_width="192dp"
+        android:layout_height="108dp"
+        android:background="#222"
+        android:contentDescription="@null"
+        android:scaleType="centerCrop" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="16dp"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/time"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="#FFF"
+            android:textSize="26sp" />
+
+        <!-- one small icon per event (person, pet, vehicle, motion, line crossing, tampering) -->
+        <LinearLayout
+            android:id="@+id/icons"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:orientation="horizontal" />
+
+        <TextView
+            android:id="@+id/info"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:textColor="#B0BEC5"
+            android:textSize="20sp" />
+
+        <!-- the clip played last for this camera (RecordingsPanel: prefs watched_<device id>) -->
+        <TextView
+            android:id="@+id/watched"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:background="@drawable/pill"
+            android:backgroundTint="#1E88E5"
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="2dp"
+            android:text="Last watched"
+            android:textColor="#FFF"
+            android:textSize="20sp"
+            android:visibility="gone" />
+    </LinearLayout>
+</LinearLayout>

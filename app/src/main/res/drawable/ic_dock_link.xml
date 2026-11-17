@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="34dp" android:height="34dp" android:viewportWidth="24" android:viewportHeight="24">
+    <!-- two small screens joined by a line = neighbour cameras (own drawing) -->
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="1.6" android:strokeLineJoin="round" android:pathData="M2,7h7v6h-7z" />
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="1.6" android:strokeLineJoin="round" android:pathData="M15,11h7v6h-7z" />
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="1.6" android:pathData="M9,10h3v4h3" />
+</vector>

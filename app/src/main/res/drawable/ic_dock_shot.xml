@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="34dp" android:height="34dp" android:viewportWidth="24" android:viewportHeight="24">
+    <!-- a simple photo camera: body, lens, top bump (own drawing) -->
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="1.6" android:strokeLineJoin="round"
+        android:pathData="M3,8h4l1.5,-2h7l1.5,2h4v11h-18z" />
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="1.6" android:pathData="M8.5,13a3.5,3.5 0,1 0,7 0a3.5,3.5 0,1 0,-7 0z" />
+</vector>
