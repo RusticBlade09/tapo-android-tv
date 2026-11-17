@@ -70,6 +70,15 @@
             android:textColor="#FFF"
             android:textSize="28sp" />
 
+        <!-- key-cap hints: OK play · hold OK save to this device -->
+        <TextView
+            android:id="@+id/flyoutHints"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="14dp"
+            android:textColor="#CFD8DC"
+            android:textSize="20sp" />
+
         <!-- Date picker: Left/Right = previous/next day -->
         <TextView
             android:id="@+id/flyoutDate"
@@ -167,6 +176,68 @@
             android:listSelector="@drawable/card_focus" />
     </LinearLayout>
 
+    <!-- A saved photo / video on full screen (GalleryPanel) -->
+    <FrameLayout
+        android:id="@+id/viewer"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#000"
+        android:visibility="gone">
+
+        <ImageView
+            android:id="@+id/viewImage"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:contentDescription="@null"
+            android:scaleType="fitCenter" />
+
+        <androidx.media3.ui.PlayerView
+            android:id="@+id/viewVideo"
+            style="@style/Video"
+            app:resize_mode="fit"
+            app:shutter_background_color="#000"
+            app:use_controller="false" />
+    </FrameLayout>
+
+    <!-- Saved screenshots + videos panel (dock "Saved"): same look as the recordings panel -->
+    <LinearLayout
+        android:id="@+id/galPanel"
+        android:layout_width="500dp"
+        android:layout_height="match_parent"
+        android:layout_gravity="end"
+        android:orientation="vertical"
+        android:padding="24dp"
+        android:background="#202124"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/galTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="sans-serif-medium"
+            android:textColor="#FFF"
+            android:textSize="28sp" />
+
+        <TextView
+            android:id="@+id/galHints"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:layout_marginBottom="16dp"
+            android:textColor="#CFD8DC"
+            android:textSize="20sp" />
+
+        <ListView
+            android:id="@+id/galList"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:divider="@android:color/transparent"
+            android:dividerHeight="12dp"
+            android:drawSelectorOnTop="true"
+            android:listSelector="@drawable/card_focus" />
+    </LinearLayout>
+
     <!-- Dock: hold OK in full-screen live. Same floating panel as the recording bar below. Left/Right choose, OK does it, Back closes. -->
     <LinearLayout
         android:id="@+id/dock"
@@ -190,6 +261,8 @@
             <TextView android:id="@+id/dockLink" style="@style/DockButton" android:drawableStart="@drawable/ic_dock_link" android:text="Neighbours" />
             <!-- saved PTZ positions (stored on the camera): OK = turn there, hold OK = edit -->
             <TextView android:id="@+id/dockPos" style="@style/DockButton" android:drawableStart="@drawable/ic_dock_pos" android:text="Positions" />
+            <!-- saved screenshots + videos on the box: show, play, delete -->
+            <TextView android:id="@+id/dockSaved" style="@style/DockButton" android:drawableStart="@drawable/ic_dock_saved" android:text="Saved" />
         </LinearLayout>
 
         <TextView
@@ -269,6 +342,7 @@
 
         <!-- how far the recording has played (display only: no scrubbing, boss dropped it) -->
         <LinearLayout
+            android:id="@+id/clipLine"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"

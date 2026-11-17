@@ -2,13 +2,10 @@ package za.munnik.tapoatv
 
 import android.app.Activity
 import android.app.AlertDialog
-import android.content.ContentValues
 import android.graphics.Bitmap
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import android.os.Environment
-import android.provider.MediaStore
 import android.view.TextureView
 import android.os.Handler
 import android.os.Looper
@@ -66,8 +63,13 @@ class MainActivity : Activity() {
         }
     }
     private val panel by lazy {
-        RecordingsPanel(this, { creds }, { busy -> status(if (busy) "Loading recordings…" else null, busy) }) { clip ->
+        RecordingsPanel(this, { creds }, { busy -> status(if (busy) "Loading recordings…" else null, busy) }, { clip ->
             full?.let { play(it, hd = true, clip) } ?: status(null) // Back was pressed while the clip was found
+        }) { msg, finished -> if (finished) { note(msg); bg.execute { trim() } } else status(msg, busy = true) }
+    }
+    private val gal by lazy {
+        GalleryPanel(this, { msg, busy -> status(msg, busy) }, { note(it) }) { on ->
+            full?.let { c -> if (on) play(c, hd = true) else { c.player?.release(); c.player = null } }
         }
     }
     private val clipTime = SimpleDateFormat("EEE HH:mm:ss", Locale.US)
@@ -86,6 +88,8 @@ class MainActivity : Activity() {
             hideDock()
             full?.let { c -> c.control?.let { pos.open(c.name, it) } ?: note("⚠  No connection to ${c.name}") }
         }
+        findViewById<View>(R.id.dockSaved).setOnClickListener { hideDock(); gal.open() }
+        bg.execute { trim() }
         findViewById<TextView>(R.id.dockHints).text = hints("◀ ▶" to "choose", "OK" to "do it", "BACK" to "close")
         val prefs = getSharedPreferences("tapo", MODE_PRIVATE)
         val md5 = prefs.getString("md5u", null)
@@ -377,6 +381,7 @@ class MainActivity : Activity() {
         val cam = full ?: return
         panel.hideNow()
         pos.hideNow()
+        gal.hideNow()
         hideDock()
         stopRec()
         findViewById<View>(R.id.clipBar).visibility = View.GONE
@@ -423,6 +428,11 @@ class MainActivity : Activity() {
         if (cam != null && pos.isOpen) { // before the DOWN-only filter: a hold needs the OK release too
             if (pos.key(e)) { if (!pos.isOpen) cam.tile.requestFocus(); return true }
             return super.dispatchKeyEvent(e) // the list and the name box handle the arrows and OK
+        }
+        if (cam != null && panel.isOpen && panel.key(e)) return true // hold OK = save needs the release too
+        if (cam != null && gal.isOpen) { // same: hold OK = delete needs the release
+            if (gal.key(e)) { if (!gal.isOpen) cam.tile.requestFocus(); return true }
+            return super.dispatchKeyEvent(e)
         }
         if (e.action != KeyEvent.ACTION_DOWN) return super.dispatchKeyEvent(e)
         if (e.keyCode == KeyEvent.KEYCODE_MENU) { askPassword(); return true }
@@ -599,25 +609,15 @@ class MainActivity : Activity() {
         full?.tile?.requestFocus()
     }
 
-    private val stamp = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US)
+    private val stamp = SavedFiles.stamp()
 
     /** A new file in Pictures/TapoATV or Movies/TapoATV on the box (MediaStore: no permission needed on Android 10). */
     private fun newFile(name: String, mime: String, dir: String): Pair<Uri, OutputStream> {
-        if (Build.VERSION.SDK_INT < 29) throw IOException("needs Android 10")
-        val v = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
-            put(MediaStore.MediaColumns.MIME_TYPE, mime)
-            put(MediaStore.MediaColumns.RELATIVE_PATH, "$dir/TapoATV")
-            put(MediaStore.MediaColumns.IS_PENDING, 1) // hidden from other apps until it's complete
-        }
-        val where = if (dir == Environment.DIRECTORY_PICTURES) MediaStore.Images.Media.EXTERNAL_CONTENT_URI else MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-        val uri = contentResolver.insert(where, v) ?: throw IOException("the box refused the file")
+        val uri = SavedFiles.create(contentResolver, name, mime, dir)
         return uri to (contentResolver.openOutputStream(uri) ?: throw IOException("can't open the file"))
     }
 
-    private fun fileDone(uri: Uri) {
-        if (Build.VERSION.SDK_INT >= 29) contentResolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
-    }
+    private fun fileDone(uri: Uri) = SavedFiles.done(contentResolver, uri)
 
     /** Saves the picture as it is now (full camera resolution) to Pictures/TapoATV. */
     private fun screenshot(cam: Cam) {
@@ -633,7 +633,14 @@ class MainActivity : Activity() {
                 fileDone(uri)
             }
             main.post { note(r.exceptionOrNull()?.let { "⚠  Screenshot failed: ${it.message}" } ?: "✓  Screenshot saved") }
+            trim()
         }
+    }
+
+    /** Auto-delete (boss 2026-11-17): oldest saved files go when ours pass 500 MB or the box has < 300 MB free. Run on bg. */
+    private fun trim() {
+        val n = runCatching { SavedFiles.trim(contentResolver) }.onFailure { android.util.Log.w("saved", "trim", it) }.getOrDefault(0)
+        if (n > 0) main.postDelayed({ note("Box space: the $n oldest saved file${if (n > 1) "s were" else " was"} deleted") }, 2_600)
     }
 
     private class Rec(val ip: String, val uri: Uri, val out: OutputStream, val started: Long)
@@ -652,6 +659,10 @@ class MainActivity : Activity() {
     private fun recTick(r: Rec) {
         if (rec !== r) return
         val s = (SystemClock.uptimeMillis() - r.started) / 1000
+        // a full box would break the file: stop in time (the auto-delete runs after the save)
+        if (s % 30 == 29L && runCatching { SavedFiles.free() }.getOrDefault(Long.MAX_VALUE) < (100L shl 20)) {
+            stopRec(); main.postDelayed({ note("⚠  Box almost full — recording stopped") }, 2_600); return
+        }
         findViewById<TextView>(R.id.recPill).apply { text = "●  REC   %d:%02d".format(s / 60, s % 60); visibility = View.VISIBLE }
         main.postDelayed({ recTick(r) }, 1_000)
     }
@@ -661,7 +672,7 @@ class MainActivity : Activity() {
         rec = null
         TapoStream.tee.remove(r.ip)
         findViewById<View>(R.id.recPill).visibility = View.GONE
-        bg.execute { runCatching { synchronized(r.out) { r.out.close() }; fileDone(r.uri) } }
+        bg.execute { runCatching { synchronized(r.out) { r.out.close() }; fileDone(r.uri) }; trim() }
         val s = (SystemClock.uptimeMillis() - r.started) / 1000
         note("✓  Video saved  (%d:%02d)".format(s / 60, s % 60))
     }
@@ -726,7 +737,7 @@ class MainActivity : Activity() {
         if (i < 0) return
         val f = full
         // never interrupt a recording playing, the recordings list, the dock or a video being saved
-        if (f?.clip != null || panel.isOpen || pos.isOpen || dock.visibility == View.VISIBLE || rec != null) return
+        if (f?.clip != null || panel.isOpen || pos.isOpen || gal.isOpen || dock.visibility == View.VISIBLE || rec != null) return
         val ip = roster[i].first
         val from = if (eventIp != null) eventFromPage else page
         // Neighbours on the same dashboard page (a car driving from one camera into the next): show them side by side
@@ -768,6 +779,7 @@ class MainActivity : Activity() {
         main.removeCallbacks(eventPoll)
         endEventMode()
         stopRec()
+        gal.hideNow()
         cams.forEach { it.player?.release(); it.player = null }
     }
 

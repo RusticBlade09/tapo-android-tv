@@ -36,6 +36,39 @@ val EVENT_ICONS = mapOf(6 to R.drawable.ic_ev_person, 9 to R.drawable.ic_ev_pet,
     2 to R.drawable.ic_ev_motion, 4 to R.drawable.ic_ev_line, 19 to R.drawable.ic_ev_tamper)
 
 /**
+ * First picture of a Tapo TS as a 320x180 thumbnail ([ex] already has its data source; the caller releases it).
+ * The box's frame grabber can't read Tapo TS, but it reads MP4: the video samples (only the first [maxUs]) are repacked first.
+ */
+fun tsFrame(ex: MediaExtractor, mp4: File, maxUs: Long = Long.MAX_VALUE): Bitmap? {
+    mp4.delete()
+    tsToMp4(ex, MediaMuxer(mp4.path, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4), maxUs)
+    val mmr = MediaMetadataRetriever()
+    try { mmr.setDataSource(mp4.path); return mmr.getFrameAtTime(0)?.let { Bitmap.createScaledBitmap(it, 320, 180, true) } }
+    finally { mmr.release() }
+}
+
+/** Repacks the VIDEO of a Tapo TS into [mux] (MP4). No sound: MP4 can't hold Tapo's G.711 (hub recordings are silent anyway). */
+fun tsToMp4(ex: MediaExtractor, mux: MediaMuxer, maxUs: Long = Long.MAX_VALUE) {
+    val track = (0 until ex.trackCount).first { ex.getTrackFormat(it).getString(MediaFormat.KEY_MIME)!!.startsWith("video/") }
+    ex.selectTrack(track)
+    val out = mux.addTrack(ex.getTrackFormat(track))
+    mux.start()
+    val buf = ByteBuffer.allocate(4 shl 20)
+    val info = MediaCodec.BufferInfo()
+    val t0 = ex.sampleTime
+    while (true) {
+        val n = ex.readSampleData(buf, 0)
+        if (n < 0 || ex.sampleTime - t0 > maxUs) break
+        val key = ex.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC != 0
+        info.set(0, n, ex.sampleTime, if (key) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0)
+        mux.writeSampleData(out, buf, info)
+        ex.advance()
+    }
+    mux.stop()
+    mux.release()
+}
+
+/**
  * The right-hand recordings panel in full screen: a date at the top (Left/Right = other day),
  * then one card per recording with a thumbnail, time, length and what triggered it.
  * Everything comes from the H500 HomeBase; [onPlay] gets the chosen clip.
@@ -45,11 +78,14 @@ class RecordingsPanel(
     private val creds: () -> Creds?,
     private val onBusy: (Boolean) -> Unit, // "Loading recordings…" spinner card while the panel waits for its first list
     private val onPlay: (Clip) -> Unit,
+    private val onSave: (msg: String, finished: Boolean) -> Unit, // "Save to this device": progress card, then the result
 ) {
     private class Item(val clip: Clip, val codes: List<Int>)
 
     private val panel = act.findViewById<View>(R.id.flyout)
     private val title = act.findViewById<TextView>(R.id.flyoutTitle)
+    private val hintLine = act.findViewById<TextView>(R.id.flyoutHints)
+    private val HINTS = hints("OK" to "play", "hold OK" to "save to this device")
     private val date = act.findViewById<TextView>(R.id.flyoutDate)
     private val sort = act.findViewById<TextView>(R.id.flyoutSort)
     private val spin = act.findViewById<View>(R.id.flyoutSpin)
@@ -105,14 +141,95 @@ class RecordingsPanel(
     fun close() {
         if (!isOpen) return
         gen++
+        endConfirm(-1)
         if (opening) { opening = false; onBusy(false); return }
         panel.animate().translationX(width).setDuration(200).withEndAction { panel.visibility = View.GONE }.start()
     }
 
-    fun hideNow() { gen++; if (opening) onBusy(false); opening = false; panel.visibility = View.GONE }
+    fun hideNow() { gen++; endConfirm(-1); if (opening) onBusy(false); opening = false; panel.visibility = View.GONE }
+
+    // ---------- hold OK on a card = "Save to this device" (boss 2026-11-17: to share it later from the phone) ----------
+    private var confirmAt = -1 // the card the "Cancel / Save" question is about
+    private var held = false
+
+    /** Every key while the panel is open comes here first (also the OK release). True = handled. */
+    fun key(e: KeyEvent): Boolean {
+        val ok = e.keyCode == KeyEvent.KEYCODE_DPAD_CENTER || e.keyCode == KeyEvent.KEYCODE_ENTER
+        if (ok && held) { if (e.action == KeyEvent.ACTION_UP) held = false; return true } // swallow the rest of a hold
+        if (ok && e.action == KeyEvent.ACTION_DOWN && e.repeatCount > 0 && confirmAt < 0 && items.isNotEmpty() && list.hasFocus()) {
+            held = true
+            list.isPressed = false // the press became a hold: no click on release
+            askSave(list.selectedItemPosition)
+            return true
+        }
+        if (e.keyCode == KeyEvent.KEYCODE_BACK && confirmAt >= 0) { if (e.action == KeyEvent.ACTION_DOWN) endConfirm(confirmAt); return true }
+        return false
+    }
+
+    private fun askSave(i: Int) {
+        val c = items.getOrNull(i)?.clip ?: return
+        confirmAt = i
+        date.visibility = View.GONE
+        sort.visibility = View.GONE
+        title.text = "Save this recording?"
+        hintLine.text = hints("OK" to "do it", "BACK" to "back")
+        // Cancel first: a stray OK must not start a long download
+        list.adapter = android.widget.ArrayAdapter(act, R.layout.pos_row,
+            listOf("Cancel", "Save to this device  (${SimpleDateFormat("HH:mm:ss", Locale.US).format(Date(c.start * 1000))}, ${c.end - c.start} s)"))
+        list.requestFocus()
+        list.setSelection(0)
+    }
+
+    /** Back to the cards ([select] = card to focus; -1 = just tidy up). */
+    private fun endConfirm(select: Int) {
+        if (confirmAt < 0) return
+        confirmAt = -1
+        date.visibility = View.VISIBLE
+        sort.visibility = View.VISIBLE
+        title.text = "$camName · recordings"
+        hintLine.text = HINTS
+        list.adapter = adapter
+        if (select >= 0) { list.requestFocus(); list.setSelection(select) }
+    }
+
+    /** Downloads the whole clip from the hub (queued on [media]: the hub allows one media session) → MP4 in Movies/TapoATV. */
+    private fun save(c: Clip) {
+        val hubIp = hub?.first ?: return
+        val name = "${camName}_${SavedFiles.stamp().format(Date(c.start * 1000))}.mp4" // the time it was filmed: the gallery shows that
+        onSave("Saving recording…", false)
+        media.execute {
+            val ts = File(act.cacheDir, "save.ts")
+            val r = runCatching {
+                val cr = creds() ?: throw IOException("no password")
+                var last = 0L
+                var total = 0L
+                TapoStream(hubIp, cr, true, c).use { s ->
+                    s.connect()
+                    ts.outputStream().use { out ->
+                        val buf = ByteArray(64 shl 10)
+                        while (true) {
+                            val n = s.read(buf, 0, buf.size)
+                            if (n < 0) break
+                            out.write(buf, 0, n)
+                            total += n
+                            if (SystemClock.uptimeMillis() - last > 500) {
+                                last = SystemClock.uptimeMillis()
+                                val mb = total / 1048576.0
+                                main.post { onSave("Saving recording…  %.1f MB".format(mb), false) }
+                            }
+                        }
+                    }
+                }
+                SavedFiles.saveMp4(act.contentResolver, ts, name)
+            }.onFailure { android.util.Log.w("saved", "save recording", it) }
+            ts.delete()
+            main.post { onSave(r.exceptionOrNull()?.let { "⚠  Save failed: ${it.message}" } ?: "✓  Saved  ·  dock → Saved", true) }
+        }
+    }
 
     /** [remember] = the panel just opened: show the day of this camera's last-watched clip instead of today. */
     private fun load(remember: Boolean = false) {
+        endConfirm(-1)
         val g = ++gen
         title.text = "$camName · recordings"
         dateLabel()
@@ -216,32 +333,8 @@ class RecordingsPanel(
                 val cr = creds() ?: return@runCatching null
                 val bytes = TapoStream(hubIp, cr, true, c.copy(end = c.start + 2)).use { it.connect(); it.readBytes() }
                 val ts = File(act.cacheDir, "preview.ts").apply { writeBytes(bytes) }
-                // The box's frame grabber can't read Tapo TS, but it reads MP4: repack the video samples first.
-                val mp4 = File(act.cacheDir, "preview.mp4").apply { delete() }
                 val ex = MediaExtractor()
-                try {
-                    ex.setDataSource(ts.path)
-                    val track = (0 until ex.trackCount).first { ex.getTrackFormat(it).getString(MediaFormat.KEY_MIME)!!.startsWith("video/") }
-                    ex.selectTrack(track)
-                    val mux = MediaMuxer(mp4.path, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-                    val out = mux.addTrack(ex.getTrackFormat(track))
-                    mux.start()
-                    val buf = ByteBuffer.allocate(4 shl 20)
-                    val info = MediaCodec.BufferInfo()
-                    while (true) {
-                        val n = ex.readSampleData(buf, 0)
-                        if (n < 0) break
-                        val key = ex.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC != 0
-                        info.set(0, n, ex.sampleTime, if (key) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0)
-                        mux.writeSampleData(out, buf, info)
-                        ex.advance()
-                    }
-                    mux.stop()
-                    mux.release()
-                } finally { ex.release() }
-                val mmr = MediaMetadataRetriever()
-                try { mmr.setDataSource(mp4.path); mmr.getFrameAtTime(0)?.let { Bitmap.createScaledBitmap(it, 320, 180, true) } }
-                finally { mmr.release() }
+                try { ex.setDataSource(ts.path); tsFrame(ex, File(act.cacheDir, "preview.mp4")) } finally { ex.release() }
             }.onFailure { android.util.Log.w("thumb", "thumbnail failed", it) }.getOrNull()
             main.post { thumbs[key] = bmp; pending.remove(key); if (g == gen) adapter.notifyDataSetChanged() }
         }
@@ -296,7 +389,11 @@ class RecordingsPanel(
             }
         }
         list.adapter = adapter
-        list.setOnItemClickListener { _, _, i, _ -> play(items[i].clip) }
+        list.setOnItemClickListener { _, _, i, _ ->
+            if (confirmAt < 0) play(items[i].clip)
+            else { val c = items[confirmAt].clip; val at = confirmAt; endConfirm(at); if (i == 1) save(c) }
+        }
+        hintLine.text = HINTS
     }
 
     private fun today(): Calendar = dayOf(System.currentTimeMillis() / 1000)
