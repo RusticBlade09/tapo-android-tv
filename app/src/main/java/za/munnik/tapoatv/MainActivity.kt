@@ -227,8 +227,8 @@ class MainActivity : Activity() {
         if (clip != null) hideDock()
         cam.clip = clip
         cam.label.text = cam.name
-        // full screen: clean picture; the name label only shows in the grid or for an error (a recording uses the bar)
-        cam.label.visibility = if (hd) View.GONE else View.VISIBLE
+        // no name labels (boss 2026-11-19); the label only comes up for an error
+        cam.label.visibility = View.GONE
         // A recording: hidden + paused behind the spinner card until its first frame (and at least 2.5 s),
         // then picture, bar and playback start together (showClipBar).
         cam.view.alpha = if (clip != null) 0f else 1f
@@ -396,8 +396,9 @@ class MainActivity : Activity() {
 
     // The blue frame on the grid fades out after 5 s without a key press; any key brings it straight back.
     private var frameAnim: android.animation.ValueAnimator? = null
-    private fun frame(alpha: Int) = listOf(R.id.tile0, R.id.tile1, R.id.tile2, R.id.tile3).forEach {
-        findViewById<View>(it).apply { foreground?.mutate()?.alpha = alpha; invalidate() }
+    private fun frame(alpha: Int) = listOf(R.id.tile0, R.id.tile1, R.id.tile2, R.id.tile3).forEach { id ->
+        if (cams.any { it.tile.id == id && it.ip in marked }) return@forEach // a red event frame never fades
+        findViewById<View>(id).apply { foreground?.mutate()?.alpha = alpha; invalidate() }
     }
     private val fadeFrame = Runnable {
         frameAnim = android.animation.ValueAnimator.ofInt(255, 0).setDuration(800).apply {
@@ -596,11 +597,14 @@ class MainActivity : Activity() {
             .show()
     }
 
-    // cameras with a fresh event while neighbours are shown side by side: their name pill turns red
+    // cameras with a fresh event while neighbours are shown side by side: their tile frame turns red (boss 2026-11-19)
     private val marked = HashSet<String>()
     private fun mark(ip: String?) {
         if (ip == null) marked.clear() else marked += ip
-        cams.forEach { it.label.backgroundTintList = if (it.ip in marked) android.content.res.ColorStateList.valueOf(0xFFE53935.toInt()) else null }
+        cams.filter { it !== full }.forEach { // full screen stays clean (no frame)
+            it.tile.foreground = getDrawable(if (it.ip in marked) R.drawable.event_frame else R.drawable.focus)
+        }
+        if (ip == null) wakeFrame() // the blue frames are back: let them fade again
     }
 
     private fun hideDock() {
