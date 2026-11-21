@@ -61,6 +61,8 @@ fun main() {
     val cams = mutableStateListOf<Cam>()
     val full = mutableStateOf<Cam?>(null)
     val status = mutableStateOf<String?>("Searching for cameras…")
+    var fullScreen = false
+    var awtWindow: androidx.compose.ui.awt.ComposeWindow? = null
 
     Thread { findCameras(prefs, creds, cams, status) }.start()
 
@@ -75,8 +77,11 @@ fun main() {
                 val f = full.value
                 if (e.type != KeyEventType.KeyDown) false
                 else if (e.key == Key.F11 || (e.key == Key.Escape && f == null)) {
-                    val toWindow = e.key == Key.Escape || ws.placement == WindowPlacement.Fullscreen
-                    ws.placement = if (toWindow) WindowPlacement.Maximized else WindowPlacement.Fullscreen
+                    fullScreen = e.key == Key.F11 && !fullScreen
+                    // Compose 1.7.3: only Floating switches full screen OFF (Maximized alone leaves it on), and two quick
+                    // state changes merge into the last one → switch it off on the window itself, then maximize.
+                    if (!fullScreen) awtWindow?.placement = WindowPlacement.Floating
+                    ws.placement = if (fullScreen) WindowPlacement.Fullscreen else WindowPlacement.Maximized
                     true
                 } else if (f == null) false
                 else when (e.key) {
@@ -90,6 +95,7 @@ fun main() {
                 }
             },
         ) {
+            awtWindow = window
             Box(Modifier.fillMaxSize().background(BG)) {
                 val f = full.value
                 if (f != null) Tile(f, Modifier.fillMaxSize(), ContentScale.Fit) { full.value = null; f.play(hd = false) }
@@ -126,22 +132,37 @@ private fun Tile(c: Cam, m: Modifier, scale: ContentScale, onDoubleClick: () -> 
     }
 }
 
-/** Known cameras first (a busy one can miss the scan), then the scan; up to 4, hub left out. */
+/**
+ * Like the TV: cameras seen before start playing AT ONCE (name remembered); the scan runs meanwhile and only adds new ones.
+ * Up to 4, hub left out.
+ */
 private fun findCameras(prefs: Preferences, creds: Creds, cams: MutableList<Cam>, status: MutableState<String?>) {
     val known = prefs.get("cams", "").split(',').filter { it.isNotBlank() }
+    SwingUtilities.invokeLater { add(cams, known.map { Cam(it, prefs.get("name_$it", it), creds) }) }
+    if (known.isNotEmpty()) SwingUtilities.invokeLater { status.value = null }
     // First scan on Wi-Fi can find nothing (cold ARP cache vs the 400 ms connect) → once more.
     val ips = (known + Scanner.scan().ifEmpty { Scanner.scan() }).distinct().sortedBy { it.substringAfterLast('.').toInt() }
-    val found = ips.mapNotNull { ip ->
-        val info = TapoControl(ip, creds).info() ?: return@mapNotNull null
-        if (info.optString("device_model").startsWith("H")) null else Cam(ip, info.optString("device_alias", ip), creds) // H = HomeBase
-    }.take(4) // shortcut: one page of 4, the TV's Dashboards for more cameras come later
-    prefs.put("cams", found.joinToString(",") { it.ip })
+    log("scan done: ${ips.size}")
+    val found = ips.parallelStream().map { ip -> // all logins at once, not one after the other
+        TapoControl(ip, creds).info()?.takeUnless { it.optString("device_model").startsWith("H") } // H = HomeBase
+            ?.let { ip to it.optString("device_alias", ip) }
+    }.toList().filterNotNull().take(4) // shortcut: one page of 4, the TV's Dashboards for more cameras come later
+    log("logins done: ${found.size}")
+    prefs.put("cams", found.joinToString(",") { it.first })
+    found.forEach { (ip, name) -> prefs.put("name_$ip", name) }
     SwingUtilities.invokeLater {
-        cams += found
-        found.forEach { it.play(hd = false) }
-        status.value = if (found.isEmpty()) "No camera found" else null
+        add(cams, found.map { (ip, name) -> Cam(ip, name, creds) })
+        status.value = if (cams.isEmpty()) "No camera found" else null
     }
 }
+
+/** Adds the cameras not shown yet (by IP), up to 4 tiles, and starts them in the grid. */
+private fun add(cams: MutableList<Cam>, new: List<Cam>) {
+    new.filter { n -> cams.none { it.ip == n.ip } }.take(4 - cams.size).forEach { cams += it; it.play(hd = false) }
+}
+
+private val t0 = System.currentTimeMillis()
+private fun log(s: String) = println("tapo +${System.currentTimeMillis() - t0} ms: $s")
 
 /** One camera: a decode thread per play() (TapoStream → FFmpeg → Compose frames); a newer play() ends the older one. */
 private class Cam(val ip: String, val name: String, private val creds: Creds) {
@@ -175,11 +196,13 @@ private class Cam(val ip: String, val name: String, private val creds: Creds) {
                     format = "mpegts"
                     pixelFormat = avutil.AV_PIX_FMT_BGRA
                     // live: start fast. The unknown 0x90 sound track makes FFmpeg read up to probesize (5 MB = minutes at VGA).
+                    // probesize ≈ 1 s of stream: VGA ~50 kB/s, HD ~250 kB/s. The camera starts with a key frame, so that's enough.
                     setOption("analyzeduration", "1000000")
-                    setOption("probesize", "200000")
+                    setOption("probesize", if (hd) "200000" else "50000")
                     setOption("fflags", "nobuffer")
                 }.use { g ->
-                    g.start()
+                    g.startUnsafe() // start() holds one lock for ALL grabbers → cameras would come up one after the other
+                    var first = true
                     while (alive()) {
                         val f = g.grabImage() ?: throw java.io.IOException("stream ended")
                         val bytes = ByteArray(f.imageStride * f.imageHeight)
@@ -188,6 +211,7 @@ private class Cam(val ip: String, val name: String, private val creds: Creds) {
                             installPixels(ImageInfo(f.imageWidth, f.imageHeight, ColorType.BGRA_8888, ColorAlphaType.OPAQUE), bytes, f.imageStride)
                         }.asComposeImageBitmap()
                         error.value = null
+                        if (first) { first = false; log("$name first frame${if (hd) " (HD)" else ""}") }
                     }
                 }
             }
