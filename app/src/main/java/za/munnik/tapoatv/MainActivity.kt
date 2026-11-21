@@ -601,8 +601,8 @@ class MainActivity : Activity() {
     private val marked = HashSet<String>()
     private fun mark(ip: String?) {
         if (ip == null) marked.clear() else marked += ip
-        cams.filter { it !== full }.forEach { // full screen stays clean (no frame)
-            it.tile.foreground = getDrawable(if (it.ip in marked) R.drawable.event_frame else R.drawable.focus)
+        cams.forEach { // full screen: no frame, except red during an event (boss 2026-11-21)
+            it.tile.foreground = if (it.ip in marked) getDrawable(R.drawable.event_frame) else if (it === full) null else getDrawable(R.drawable.focus)
         }
         if (ip == null) wakeFrame() // the blue frames are back: let them fade again
     }
@@ -766,6 +766,7 @@ class MainActivity : Activity() {
         if (i / 4 != page) flip(i / 4 - page)
         val cam = cams.firstOrNull { it.ip == roster[i].first } ?: return
         openFull(cam)
+        mark(cam.ip)
         eventNote(codes, cam.name)
         eventIp = cam.ip; eventFromPage = from
         main.removeCallbacks(eventBack); main.postDelayed(eventBack, 30_000)
