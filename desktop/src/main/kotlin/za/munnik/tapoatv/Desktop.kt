@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
@@ -31,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPlacement
+import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import androidx.compose.ui.graphics.asComposeImageBitmap
@@ -61,27 +63,29 @@ fun main() {
     val cams = mutableStateListOf<Cam>()
     val full = mutableStateOf<Cam?>(null)
     val status = mutableStateOf<String?>("Searching for cameras…")
-    var fullScreen = false
+    // Non-null = our own full screen: a window WITHOUT border covering that monitor. Not Compose's Fullscreen: on Windows that
+    // is Java's exclusive full screen, which minimizes itself as soon as another window gets the focus.
+    val fullScreen = mutableStateOf<java.awt.Rectangle?>(null)
     var awtWindow: androidx.compose.ui.awt.ComposeWindow? = null
 
     Thread { findCameras(prefs, creds, cams, status) }.start()
 
     application {
-        // Opens as a (maximized) window; F11 = truly full screen like the TV, no title bar. F11 again, or Esc in the grid = window.
+        // Opens as a (maximized) window; F11 = full screen like the TV, no title bar. F11 again, or Esc in the grid = window.
+        // A border can't be added/removed on a shown window → key() builds a new window for each mode (the cameras keep playing).
         val ws = rememberWindowState(placement = WindowPlacement.Maximized, size = DpSize(1280.dp, 760.dp))
-        Window(
+        val fs = fullScreen.value
+        key(fs) { Window(
             onCloseRequest = { cams.forEach { it.release() }; exitApplication() },
-            state = ws,
+            state = if (fs == null) ws else rememberWindowState(position = WindowPosition(fs.x.dp, fs.y.dp), size = DpSize(fs.width.dp, fs.height.dp)),
+            undecorated = fs != null,
             title = "TapoATV",
             onKeyEvent = { e ->
                 val f = full.value
                 if (e.type != KeyEventType.KeyDown) false
                 else if (e.key == Key.F11 || (e.key == Key.Escape && f == null)) {
-                    fullScreen = e.key == Key.F11 && !fullScreen
-                    // Compose 1.7.3: only Floating switches full screen OFF (Maximized alone leaves it on), and two quick
-                    // state changes merge into the last one → switch it off on the window itself, then maximize.
-                    if (!fullScreen) awtWindow?.placement = WindowPlacement.Floating
-                    ws.placement = if (fullScreen) WindowPlacement.Fullscreen else WindowPlacement.Maximized
+                    // the monitor the window is on now (AWT units = Compose dp on desktop)
+                    fullScreen.value = if (e.key == Key.F11 && fs == null) awtWindow?.graphicsConfiguration?.bounds else null
                     true
                 } else if (f == null) false
                 else when (e.key) {
@@ -116,7 +120,7 @@ fun main() {
                         style = TextStyle(color = Color.White, fontSize = 22.sp))
                 }
             }
-        }
+        } } // Window, key
     }
 }
 
