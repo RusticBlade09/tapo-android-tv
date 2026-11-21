@@ -7,7 +7,17 @@ plugins {
 
 java { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
 kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }
-compose.desktop { application { mainClass = "za.munnik.tapoatv.DesktopKt" } }
+compose.desktop {
+    application {
+        mainClass = "za.munnik.tapoatv.DesktopKt"
+        // `gradlew :desktop:createDistributable` → build/compose/binaries/main/app/TapoATV/TapoATV.exe, with its own Java inside.
+        nativeDistributions {
+            packageName = "TapoATV"
+            packageVersion = "1.0.0"
+            includeAllModules = true // shortcut: ~+50 MB vs picking modules by hand (prefs, desktop, net…); trim when size matters
+        }
+    }
+}
 
 dependencies {
     implementation(project(":core"))
