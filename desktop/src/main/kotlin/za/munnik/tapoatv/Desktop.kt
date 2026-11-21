@@ -6,6 +6,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -33,36 +34,31 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPlacement
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
-import java.awt.image.BufferedImage
-import java.awt.image.DataBufferInt
-import java.io.InputStream
+import androidx.compose.ui.graphics.asComposeImageBitmap
 import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import java.util.prefs.Preferences
 import javax.swing.JOptionPane
 import javax.swing.JPasswordField
 import javax.swing.SwingUtilities
-import uk.co.caprica.vlcj.factory.MediaPlayerFactory
-import uk.co.caprica.vlcj.media.callback.nonseekable.NonSeekableInputStreamMedia
-import uk.co.caprica.vlcj.player.base.MediaPlayer
-import uk.co.caprica.vlcj.player.base.MediaPlayerEventAdapter
-import uk.co.caprica.vlcj.player.embedded.videosurface.callback.BufferFormat
-import uk.co.caprica.vlcj.player.embedded.videosurface.callback.BufferFormatCallback
-import uk.co.caprica.vlcj.player.embedded.videosurface.callback.RenderCallback
-import uk.co.caprica.vlcj.player.embedded.videosurface.callback.format.RV32BufferFormat
+import org.bytedeco.ffmpeg.global.avutil
+import org.bytedeco.javacv.FFmpegFrameGrabber
+import org.jetbrains.skia.Bitmap
+import org.jetbrains.skia.ColorAlphaType
+import org.jetbrains.skia.ColorType
+import org.jetbrains.skia.ImageInfo
 
 /**
  * Windows version, step 3: the 2x2 grid like the TV (VGA, silent), double-click = that camera full screen in HD,
- * Esc / Backspace / double-click = back, arrow keys = PTZ. VLC decodes; each frame is copied into Compose
- * (not a native window), so our own cards and frames can be drawn over the video later.
+ * Esc / Backspace / double-click = back, arrow keys = PTZ. FFmpeg (packed in the app) decodes; each frame is drawn by
+ * Compose, so our own cards and frames can sit over the video. Full screen plays the camera's sound (grid silent, like the TV).
  */
 private val BG = Color(0xFF111111)
 private val CARD = Color(0xFF202124)
-private val vlc by lazy { MediaPlayerFactory() }
 
 fun main() {
     val prefs = Preferences.userRoot().node("za/munnik/tapoatv") // same idea as the TV: only the hashes are kept
     val creds = savedCreds(prefs) ?: askPassword(prefs) ?: return
+    avutil.av_log_set_level(avutil.AV_LOG_ERROR) // FFmpeg is chatty about the Tapo stream's unknown sound track
     val cams = mutableStateListOf<Cam>()
     val full = mutableStateOf<Cam?>(null)
     val status = mutableStateOf<String?>("Searching for cameras…")
@@ -91,7 +87,8 @@ fun main() {
             Box(Modifier.fillMaxSize().background(BG)) {
                 val f = full.value
                 if (f != null) Tile(f, Modifier.fillMaxSize()) { full.value = null; f.play(hd = false) }
-                else Column(Modifier.fillMaxSize().padding(1.dp)) { // 2dp equal gaps everywhere, like the TV grid
+                // The grid itself is 16:9 (like the TV screen) so each picture fills its tile: 2dp equal gaps, no black bars between.
+                else Column(Modifier.align(Alignment.Center).aspectRatio(16f / 9f).padding(1.dp)) {
                     for (row in 0..1) Row(Modifier.weight(1f)) {
                         for (col in 0..1) {
                             val c = cams.getOrNull(row * 2 + col)
@@ -139,35 +136,57 @@ private fun findCameras(prefs: Preferences, creds: Creds, cams: MutableList<Cam>
     }
 }
 
-/** One camera: its own VLC player, frames copied into [frame] for Compose. */
+/** One camera: a decode thread per play() (TapoStream → FFmpeg → Compose frames); a newer play() ends the older one. */
 private class Cam(val ip: String, val name: String, private val creds: Creds) {
     val frame = mutableStateOf<ImageBitmap?>(null)
     val error = mutableStateOf<String?>(null)
     private val control = TapoControl(ip, creds)
-    private val player = vlc.mediaPlayers().newEmbeddedMediaPlayer()
-    private var media: LiveMedia? = null // VLC calls into it natively: a hard reference stops the GC from freeing it mid-stream
-    private var hd = false
-
-    init {
-        val frames = Frames(frame)
-        player.videoSurface().set(vlc.videoSurfaces().newVideoSurface(frames, frames, true))
-        player.events().addMediaPlayerEventListener(object : MediaPlayerEventAdapter() {
-            override fun playing(mp: MediaPlayer) { error.value = null }
-            override fun error(mp: MediaPlayer) = retry()
-            override fun finished(mp: MediaPlayer) = retry()
-        })
-    }
+    @Volatile private var gen = 0
 
     fun play(hd: Boolean) {
-        this.hd = hd
-        media = LiveMedia(ip, creds, hd)
-        player.media().play(media, ":demux=ts", ":live-caching=300")
+        val my = ++gen
+        Thread {
+            while (my == gen) {
+                try {
+                    decode(hd) { my == gen }
+                } catch (e: Exception) {
+                    if (my != gen) break
+                    error.value = "no picture, retrying…"
+                    // shortcut: retries every 30 s, also for a refused password; the TV waits 10 min then (camera lockout)
+                    repeat(30) { if (my == gen) Thread.sleep(1000) }
+                }
+            }
+        }.apply { isDaemon = true }.start()
     }
 
-    // shortcut: retries every 30 s, also for a refused password; the TV waits 10 min then (camera lockout) — copy that if needed
-    private fun retry() {
-        error.value = "no picture, retrying…"
-        Thread { Thread.sleep(30_000); SwingUtilities.invokeLater { play(hd) } }.start()
+    private fun decode(hd: Boolean, alive: () -> Boolean) {
+        val speaker = if (hd) runCatching { AlawSpeaker() }.getOrNull() else null // no sound device = picture only
+        try {
+            TapoStream(ip, creds, hd).use { s ->
+                s.connect()
+                FFmpegFrameGrabber(AudioTap(s, speaker?.let { sp -> TsAudio(sp::play) }), 0).apply {
+                    format = "mpegts"
+                    pixelFormat = avutil.AV_PIX_FMT_BGRA
+                    // live: start fast. The unknown 0x90 sound track makes FFmpeg read up to probesize (5 MB = minutes at VGA).
+                    setOption("analyzeduration", "1000000")
+                    setOption("probesize", "200000")
+                    setOption("fflags", "nobuffer")
+                }.use { g ->
+                    g.start()
+                    while (alive()) {
+                        val f = g.grabImage() ?: throw java.io.IOException("stream ended")
+                        val bytes = ByteArray(f.imageStride * f.imageHeight)
+                        (f.image[0] as ByteBuffer).duplicate().apply { rewind() }.let { it.get(bytes, 0, minOf(bytes.size, it.remaining())) }
+                        frame.value = Bitmap().apply {
+                            installPixels(ImageInfo(f.imageWidth, f.imageHeight, ColorType.BGRA_8888, ColorAlphaType.OPAQUE), bytes, f.imageStride)
+                        }.asComposeImageBitmap()
+                        error.value = null
+                    }
+                }
+            }
+        } finally {
+            speaker?.close()
+        }
     }
 
     fun move(x: Int, y: Int): Boolean {
@@ -175,32 +194,7 @@ private class Cam(val ip: String, val name: String, private val creds: Creds) {
         return true
     }
 
-    fun release() = player.release()
-}
-
-/** VLC hands us each decoded picture (RV32 = BGRA bytes) → one reused BufferedImage → Compose. */
-private class Frames(private val out: MutableState<ImageBitmap?>) : BufferFormatCallback, RenderCallback {
-    private var img: BufferedImage? = null
-
-    override fun getBufferFormat(w: Int, h: Int): BufferFormat {
-        img = BufferedImage(w, h, BufferedImage.TYPE_INT_RGB)
-        return RV32BufferFormat(w, h)
-    }
-
-    override fun allocatedBuffers(buffers: Array<ByteBuffer>) {}
-
-    override fun display(mp: MediaPlayer, buffers: Array<ByteBuffer>, format: BufferFormat) {
-        val i = img ?: return
-        buffers[0].order(ByteOrder.nativeOrder()).asIntBuffer().get((i.raster.dataBuffer as DataBufferInt).data)
-        out.value = i.toComposeImageBitmap()
-    }
-}
-
-/** VLC reads the decrypted MPEG-TS straight from TapoStream. */
-private class LiveMedia(private val ip: String, private val creds: Creds, private val hd: Boolean) : NonSeekableInputStreamMedia() {
-    override fun onOpenStream(): InputStream = TapoStream(ip, creds, hd).also { it.connect() }
-    override fun onCloseStream(inputStream: InputStream) = inputStream.close()
-    override fun onGetSize() = 0L
+    fun release() { gen++ }
 }
 
 private fun savedCreds(p: Preferences): Creds? {
