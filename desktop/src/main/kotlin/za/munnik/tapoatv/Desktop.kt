@@ -6,7 +6,6 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -66,13 +65,20 @@ fun main() {
     Thread { findCameras(prefs, creds, cams, status) }.start()
 
     application {
+        // Opens as a (maximized) window; F11 = truly full screen like the TV, no title bar. F11 again, or Esc in the grid = window.
+        val ws = rememberWindowState(placement = WindowPlacement.Maximized, size = DpSize(1280.dp, 760.dp))
         Window(
             onCloseRequest = { cams.forEach { it.release() }; exitApplication() },
-            state = rememberWindowState(placement = WindowPlacement.Maximized, size = DpSize(1280.dp, 760.dp)),
+            state = ws,
             title = "TapoATV",
             onKeyEvent = { e ->
                 val f = full.value
-                if (e.type != KeyEventType.KeyDown || f == null) false
+                if (e.type != KeyEventType.KeyDown) false
+                else if (e.key == Key.F11 || (e.key == Key.Escape && f == null)) {
+                    val toWindow = e.key == Key.Escape || ws.placement == WindowPlacement.Fullscreen
+                    ws.placement = if (toWindow) WindowPlacement.Maximized else WindowPlacement.Fullscreen
+                    true
+                } else if (f == null) false
                 else when (e.key) {
                     Key.Escape, Key.Backspace -> { full.value = null; f.play(hd = false); true }
                     // shortcut: step 10 = the TV's guess, never calibrated on the C530WS
@@ -86,14 +92,15 @@ fun main() {
         ) {
             Box(Modifier.fillMaxSize().background(BG)) {
                 val f = full.value
-                if (f != null) Tile(f, Modifier.fillMaxSize()) { full.value = null; f.play(hd = false) }
-                // The grid itself is 16:9 (like the TV screen) so each picture fills its tile: 2dp equal gaps, no black bars between.
-                else Column(Modifier.align(Alignment.Center).aspectRatio(16f / 9f).padding(1.dp)) {
+                if (f != null) Tile(f, Modifier.fillMaxSize(), ContentScale.Fit) { full.value = null; f.play(hd = false) }
+                // The grid fills the whole screen, 2dp equal gaps. Pictures fill their tiles (Crop): on a 16:9 screen that cuts
+                // nothing; on a wider screen a strip top + bottom. Full screen (one camera) always shows the whole picture.
+                else Column(Modifier.fillMaxSize().padding(1.dp)) {
                     for (row in 0..1) Row(Modifier.weight(1f)) {
                         for (col in 0..1) {
                             val c = cams.getOrNull(row * 2 + col)
                             val m = Modifier.weight(1f).fillMaxHeight().padding(1.dp)
-                            if (c == null) Box(m) else Tile(c, m) { full.value = c; c.play(hd = true) }
+                            if (c == null) Box(m) else Tile(c, m, ContentScale.Crop) { full.value = c; c.play(hd = true) }
                         }
                     }
                 }
@@ -108,9 +115,9 @@ fun main() {
 }
 
 @androidx.compose.runtime.Composable
-private fun Tile(c: Cam, m: Modifier, onDoubleClick: () -> Unit) {
+private fun Tile(c: Cam, m: Modifier, scale: ContentScale, onDoubleClick: () -> Unit) {
     Box(m.background(Color.Black).pointerInput(c) { detectTapGestures(onDoubleTap = { onDoubleClick() }) }) {
-        c.frame.value?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit) }
+        c.frame.value?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = scale) }
         c.error.value?.let { // like the TV: the name only comes up for an error
             BasicText("${c.name} — $it", Modifier.align(Alignment.TopEnd).padding(8.dp)
                 .background(CARD, RoundedCornerShape(12.dp)).padding(horizontal = 12.dp, vertical = 6.dp),
