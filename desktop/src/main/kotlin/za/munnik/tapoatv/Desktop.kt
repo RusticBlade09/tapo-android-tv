@@ -89,7 +89,7 @@ fun main() {
                     true
                 } else if (f == null) false
                 else when (e.key) {
-                    Key.Escape, Key.Backspace -> { full.value = null; f.play(hd = false); true }
+                    Key.Escape, Key.Backspace -> { full.value = null; f.sound = false; true }
                     // shortcut: step 10 = the TV's guess, never calibrated on the C530WS
                     Key.DirectionLeft -> f.move(-10, 0)
                     Key.DirectionRight -> f.move(10, 0)
@@ -102,7 +102,7 @@ fun main() {
             awtWindow = window
             Box(Modifier.fillMaxSize().background(BG)) {
                 val f = full.value
-                if (f != null) Tile(f, Modifier.fillMaxSize(), ContentScale.Fit) { full.value = null; f.play(hd = false) }
+                if (f != null) Tile(f, Modifier.fillMaxSize(), ContentScale.Fit) { full.value = null; f.sound = false }
                 // The grid fills the whole screen, 2dp equal gaps. Pictures fill their tiles (Crop): on a 16:9 screen that cuts
                 // nothing; on a wider screen a strip top + bottom. Full screen (one camera) always shows the whole picture.
                 else Column(Modifier.fillMaxSize().padding(1.dp)) {
@@ -110,7 +110,7 @@ fun main() {
                         for (col in 0..1) {
                             val c = cams.getOrNull(row * 2 + col)
                             val m = Modifier.weight(1f).fillMaxHeight().padding(1.dp)
-                            if (c == null) Box(m) else Tile(c, m, ContentScale.Crop) { full.value = c; c.play(hd = true) }
+                            if (c == null) Box(m) else Tile(c, m, ContentScale.Crop) { full.value = c; c.sound = true }
                         }
                     }
                 }
@@ -162,27 +162,33 @@ private fun findCameras(prefs: Preferences, creds: Creds, cams: MutableList<Cam>
 
 /** Adds the cameras not shown yet (by IP), up to 4 tiles, and starts them in the grid. */
 private fun add(cams: MutableList<Cam>, new: List<Cam>) {
-    new.filter { n -> cams.none { it.ip == n.ip } }.take(4 - cams.size).forEach { cams += it; it.play(hd = false) }
+    new.filter { n -> cams.none { it.ip == n.ip } }.take(4 - cams.size).forEach { cams += it; it.play() }
 }
 
 private val t0 = System.currentTimeMillis()
 private fun log(s: String) = println("tapo +${System.currentTimeMillis() - t0} ms: $s")
 
-/** One camera: a decode thread per play() (TapoStream → FFmpeg → Compose frames); a newer play() ends the older one. */
+/**
+ * One camera: a decode thread (TapoStream → FFmpeg → Compose frames). On the PC always the HD stream, also in the grid
+ * (boss 2026-11-21; the TV uses VGA there), so full screen is instant: it only switches [sound] on.
+ */
 private class Cam(val ip: String, val name: String, private val creds: Creds) {
     val frame = mutableStateOf<ImageBitmap?>(null)
     val error = mutableStateOf<String?>(null)
     private val control = TapoControl(ip, creds)
     @Volatile private var gen = 0
 
-    fun play(hd: Boolean) {
+    @Volatile var sound = false // full screen = this camera's sound; the grid stays silent, like the TV
+
+    fun play() {
         val my = ++gen
         Thread {
             while (my == gen) {
                 try {
-                    decode(hd) { my == gen }
+                    decode { my == gen }
                 } catch (e: Exception) {
                     if (my != gen) break
+                    log("$name: ${e.message} → retry in 30 s")
                     error.value = "no picture, retrying…"
                     // shortcut: retries every 30 s, also for a refused password; the TV waits 10 min then (camera lockout)
                     repeat(30) { if (my == gen) Thread.sleep(1000) }
@@ -191,21 +197,25 @@ private class Cam(val ip: String, val name: String, private val creds: Creds) {
         }.apply { isDaemon = true }.start()
     }
 
-    private fun decode(hd: Boolean, alive: () -> Boolean) {
-        val speaker = if (hd) runCatching { AlawSpeaker() }.getOrNull() else null // no sound device = picture only
+    private fun decode(alive: () -> Boolean) {
+        val speaker = runCatching { AlawSpeaker() }.getOrNull() // no sound device = picture only
         try {
-            TapoStream(ip, creds, hd).use { s ->
+            TapoStream(ip, creds, hd = true).use { s ->
                 s.connect()
-                FFmpegFrameGrabber(AudioTap(s, speaker?.let { sp -> TsAudio(sp::play) }), 0).apply {
+                FFmpegFrameGrabber(AudioTap(s, speaker?.let { sp -> TsAudio { b, off, len -> if (sound) sp.play(b, off, len) } }), 0).apply {
                     format = "mpegts"
                     pixelFormat = avutil.AV_PIX_FMT_BGRA
                     // live: start fast. The unknown 0x90 sound track makes FFmpeg read up to probesize (5 MB = minutes at VGA).
-                    // probesize ≈ 1 s of stream: VGA ~50 kB/s, HD ~250 kB/s. The camera starts with a key frame, so that's enough.
-                    setOption("analyzeduration", "1000000")
-                    setOption("probesize", if (hd) "200000" else "50000")
+                    // Don't let FFmpeg study the stream first: Tapo's unknown 0x90 sound track keeps it reading to probesize,
+                    // and a quiet camera sends only ~13 kB/s (200 kB took 15 s). The decoder learns the size from the first frame.
+                    setOption("analyzeduration", "0")
+                    setOption("probesize", "32")
                     setOption("fflags", "nobuffer")
+                    setVideoOption("thread_type", "slice") // frame threads hold back one frame per thread = live picture lags
                 }.use { g ->
+                    log("$name connected")
                     g.startUnsafe() // start() holds one lock for ALL grabbers → cameras would come up one after the other
+                    log("$name probe done ${g.imageWidth}x${g.imageHeight} ${g.frameRate} fps")
                     var first = true
                     while (alive()) {
                         val f = g.grabImage() ?: throw java.io.IOException("stream ended")
@@ -215,7 +225,7 @@ private class Cam(val ip: String, val name: String, private val creds: Creds) {
                             installPixels(ImageInfo(f.imageWidth, f.imageHeight, ColorType.BGRA_8888, ColorAlphaType.OPAQUE), bytes, f.imageStride)
                         }.asComposeImageBitmap()
                         error.value = null
-                        if (first) { first = false; log("$name first frame${if (hd) " (HD)" else ""}") }
+                        if (first) { first = false; log("$name first frame ${f.imageWidth}x${f.imageHeight}") }
                     }
                 }
             }
